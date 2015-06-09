@@ -94,9 +94,9 @@ class ProcessState(object):
     def active(self):
         return len(self._running) > 0
 
-    def make_process(self, loop, pid, on_exit):
+    def make_process(self, loop, emitter, pid, on_exit):
         """Create an OS process using this template."""
-        return self.config.make_process(loop, pid, self.name, on_exit=on_exit)
+        return self.config.make_process(loop, emitter, pid, self.name, on_exit=on_exit)
 
     def queue(self, process):
         """Put one OS process in the running queue."""

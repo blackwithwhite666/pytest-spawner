@@ -6,19 +6,22 @@ import shlex
 import six
 import pyuv
 
-from .events import EventEmitter
 from .util import getcwd
 
 
 class Stream(object):
     """Create stream to pass into subprocess."""
 
-    def __init__(self, loop, process, label):
+    def __init__(self, loop, emitter, process, label):
         self._loop = loop
+        self._emitter = emitter
         self._process = process
         self._channel = pyuv.Pipe(self._loop)
-        self._label = label
-        self._emitter = EventEmitter()
+
+        evtype_prefix = 'proc.%d.io.%s' % (self._process.pid, label)
+        self.read_evtype = '%s.read' % evtype_prefix
+        self.write_evtype = '%s.write' % evtype_prefix
+        self.writelines_evtype = '%s.writelines' % evtype_prefix
 
     @property
     def stdio(self):
@@ -33,36 +36,20 @@ class Stream(object):
         self._channel.writelines(data)
 
     def _on_read(self, handle, data, error):
-        if not data:
-            return
-
         msg = dict(
-            event=self._label, name=self._process.name,
+            event=self.read_evtype, name=self._process.name, stream=self,
             pid=self._process.pid, data=data, error=error)
-        self._emitter.publish(self._label, msg)
+        self._emitter.publish(self.read_evtype, msg)
 
-    def subscribe(self, label, listener):
-        self._emitter.subscribe(label, listener)
-
-    def unsubscribe(self, label, listener):
-        self._emitter.unsubscribe(label, listener)
-
-    def write(self, data):
-        self._emitter.publish("WRITE", data)
-
-    def writelines(self, data):
-        self._emitter.publish("WRITELINES", data)
-
-    def start_reading(self):
+    def start(self):
         self._channel.start_read(self._on_read)
-
-    def start_writing(self):
-        self._emitter.subscribe("WRITE", self._on_write)
-        self._emitter.subscribe("WRITELINES", self._on_writelines)
+        self._emitter.subscribe(self.write_evtype, self._on_write)
+        self._emitter.subscribe(self.writelines_evtype, self._on_writelines)
 
     def stop(self):
         if not self._channel.closed:
             self._channel.close()
+        self._process = None
 
 
 class ProcessConfig(object):
@@ -79,7 +66,7 @@ class ProcessConfig(object):
         self.cmd = cmd
         self.settings = settings
 
-    def make_process(self, loop, pid, label, env=None, on_exit=None):
+    def make_process(self, loop, emitter, pid, label, env=None, on_exit=None):
         params = {}
         for name, default in self.DEFAULT_PARAMS.items():
             params[name] = self.settings.get(name, default)
@@ -94,17 +81,20 @@ class ProcessConfig(object):
             params['env'].update(env)
 
         params['on_exit_cb'] = on_exit
-        return Process(loop, pid, label, self.cmd, **params)
+        return Process(loop, emitter, pid, label, self.cmd, **params)
 
 
 class Process(object):
     """Class wrapping a process."""
 
-    def __init__(self, loop, pid, name, cmd, args=None, env=None, cwd=None, on_exit_cb=None):
+    def __init__(self, loop, emitter, pid, name, cmd,
+                 args=None, env=None, cwd=None, on_exit_cb=None):
         self._loop = loop
+        self._emitter = emitter
+        self._env = env or {}
+
         self.pid = pid
         self.name = name
-        self._env = env or {}
 
         # set command
         self._cmd = six.b(cmd)
@@ -116,44 +106,45 @@ class Process(object):
 
         else:
             splitted_args = shlex.split(self._cmd)
-            if len(splitted_args) == 1:
-                self._args = []
-            else:
+            if len(splitted_args) > 1:
                 self._cmd = splitted_args[0]
-                self._args = splitted_args[1:]
+            self._args = splitted_args
 
         self._cwd = cwd or getcwd()
-
-        self._redirect_stdin = None
-        self._redirect_stdout = None
-        self._redirect_stderr = None
 
         self._on_exit_cb = on_exit_cb
         self._process = None
         self._stdio = []
+        self._streams = []
         self._stopped = False
-        self._graceful_time = 0
-        self._graceful_timeout = None
-        self._once = False
         self._running = False
+
+        self._graceful_time = 0
+        self.graceful_timeout = None
+        self.once = False
+
+        self._exit_status = None
+        self._term_signal = None
 
         self._setup_stdio()
 
+    @property
+    def running(self):
+        return self._running
+
     def _setup_stdio(self):
-        self._redirect_stdin = Stream(self._loop, self, 'stdin')
-        self._redirect_stdout = Stream(self._loop, self, 'stdout')
-        self._redirect_stderr = Stream(self._loop, self, 'stderr')
-        self._stdio = [
-            self._redirect_stdin.stdio,
-            self._redirect_stdout.stdio,
-            self._redirect_stderr.stdio
+        self._streams = [
+            Stream(self._loop, self._emitter, self, 'stdin'),
+            Stream(self._loop, self._emitter, self, 'stdout'),
+            Stream(self._loop, self._emitter, self, 'stderr')
         ]
+        self._stdio = [stream.stdio for stream in self._streams]
 
     def spawn(self, once=False, graceful_timeout=None, env=None):
         """Spawn the process."""
 
-        self._once = once
-        self._graceful_timeout = graceful_timeout
+        self.once = once
+        self.graceful_timeout = graceful_timeout
 
         if env is not None:
             self._env.update(env)
@@ -172,18 +163,31 @@ class Process(object):
         self._running = True
 
         # start redirecting IO
-        self._redirect_stderr.start_reading()
-        self._redirect_stdout.start_reading()
-        self._redirect_stdin.start_writing()
+        for stream in self._streams:
+            self._emitter.subscribe(stream.read_evtype, self._on_read_cb)
+            stream.start()
+
+    def _dispatch_cb(self):
+        # handle the exit callback
+        if self._on_exit_cb is not None and self._process is None and not self._streams:
+            self._on_exit_cb(self, self._exit_status, self._term_signal)
+
+    def _on_read_cb(self, evtype, msg):
+        error = msg["error"]
+        stream = msg["stream"]
+
+        if error is not None and error & pyuv.errno.UV_EOF:
+            stream.stop()
+            self._streams.remove(stream)
+
+            self._dispatch_cb()
 
     def _exit_cb(self, handle, exit_status, term_signal):
-        self._redirect_stdin.stop()
-        self._redirect_stdout.stop()
-        self._redirect_stderr.stop()
-
         self._running = False
+        self._process = None
         handle.close()
 
-        # handle the exit callback
-        if self._on_exit_cb is not None:
-            self._on_exit_cb(self, exit_status, term_signal)
+        self._exit_status = exit_status
+        self._term_signal = term_signal
+
+        self._dispatch_cb()

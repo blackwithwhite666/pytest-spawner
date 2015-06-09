@@ -74,6 +74,21 @@ class Manager(object):
         # stop the process now.
         self._stop_process(state)
 
+    def commit(self, name, graceful_timeout=None, env=None):
+        """The process won't be kept alived at the end."""
+
+        with self._lock:
+            state = self._get_state(name)
+
+            # notify that we are starting the process
+            self._publish('commit', name=state.name)
+
+            self._spawn_process(
+                state=state,
+                once=True,
+                graceful_timeout=graceful_timeout,
+                env=env)
+
     def _get_process_id(self):
         """Generate a process id."""
         with self._lock:
@@ -99,14 +114,21 @@ class Manager(object):
 
             self._reap_processes(state)
 
-    def _spawn_process(self, state):
+    def _manage_processes(self, state):
+        if state.stopped:
+            return
+
+        if not state.active:
+            self._spawn_process(state)
+
+    def _spawn_process(self, state, once=False, graceful_timeout=None, env=None):
         """Spawn a new process and add it to the state."""
         # get internal process id
         pid = self._get_process_id()
 
         # start process
-        process = state.make_process(self._loop, pid, self._on_process_exit)
-        process.spawn()
+        process = state.make_process(self._loop, self._events, pid, self._on_process_exit)
+        process.spawn(once, graceful_timeout, env)
 
         # add the process to the running state
         state.queue(process)
@@ -143,13 +165,6 @@ class Manager(object):
             self._publish('reap', name=process.name, pid=process.pid)
             self._publish('state.%s.reap' % process.name, name=process.name, pid=process.pid)
             self._publish('proc.%s.reap' % process.pid, name=process.name, pid=process.pid)
-
-    def _manage_processes(self, state):
-        if state.stopped:
-            return
-
-        if not state.active:
-            self._spawn_process(state)
 
     def _publish(self, evtype, **ev):
         event = {'event': evtype}
@@ -229,7 +244,8 @@ class Manager(object):
                 name=process.name,
                 pid=process.pid,
                 exit_status=exit_status,
-                term_signal=term_signal)
+                term_signal=term_signal,
+                once=process.once)
 
             self._publish('exit', **ev_details)
             self._publish('state.%s.exit' % process.name, **ev_details)
