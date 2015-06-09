@@ -61,7 +61,7 @@ class Stream(object):
         self._emitter.subscribe("WRITELINES", self._on_writelines)
 
     def stop(self):
-        if self._channel.active:
+        if not self._channel.closed:
             self._channel.close()
 
 
