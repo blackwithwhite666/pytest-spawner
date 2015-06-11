@@ -2,12 +2,15 @@
 
 import threading
 import collections
+import signal
 
 import pyuv
 
 from .state import ProcessTracker, ProcessState
 from .events import EventEmitter
 from .error import ProcessNotFound, ProcessConflict
+
+DEFAULT_GRACEFUL_TIMEOUT = 10.0
 
 
 class Manager(object):
@@ -128,7 +131,7 @@ class Manager(object):
 
         # start process
         process = state.make_process(self._loop, self._events, pid, self._on_process_exit)
-        process.spawn(once, graceful_timeout, env)
+        process.spawn(once, graceful_timeout or DEFAULT_GRACEFUL_TIMEOUT, env)
 
         # add the process to the running state
         state.queue(process)
@@ -141,9 +144,6 @@ class Manager(object):
         self._publish('proc.%s.spawn' % pid, name=process.name, pid=pid)
 
     def _reap_processes(self, state):
-        if state.stopped:
-            return
-
         while True:
             # remove the process from the running processes
             try:
@@ -156,10 +156,10 @@ class Manager(object):
                 self._running.pop(process.pid)
 
             # stop the process
-            process.stop()
+            process.kill(signal.SIGTERM)
 
             # track this process to make sure it's killed after the graceful time
-            self._tracker.check(process, state.graceful_timeout)
+            self._tracker.check(process, process.graceful_timeout)
 
             # notify others that the process is beeing reaped
             self._publish('reap', name=process.name, pid=process.pid)

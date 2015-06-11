@@ -8,6 +8,8 @@ import pyuv
 
 from .util import getcwd
 
+pyuv.Process.disable_stdio_inheritance()
+
 
 class Stream(object):
     """Create stream to pass into subprocess."""
@@ -128,10 +130,6 @@ class Process(object):
 
         self._setup_stdio()
 
-    @property
-    def running(self):
-        return self._running
-
     def _setup_stdio(self):
         self._streams = [
             Stream(self._loop, self._emitter, self, 'stdin'),
@@ -139,6 +137,10 @@ class Process(object):
             Stream(self._loop, self._emitter, self, 'stderr')
         ]
         self._stdio = [stream.stdio for stream in self._streams]
+
+    @property
+    def running(self):
+        return self._running
 
     def spawn(self, once=False, graceful_timeout=None, env=None):
         """Spawn the process."""
@@ -158,14 +160,22 @@ class Process(object):
             stdio=self._stdio)
 
         # spawn the process
-        self._process = pyuv.Process(self._loop)
-        self._process.spawn(self._loop, **kwargs)
+        self._process = pyuv.Process.spawn(self._loop, **kwargs)
         self._running = True
 
         # start redirecting IO
         for stream in self._streams:
             self._emitter.subscribe(stream.read_evtype, self._on_read_cb)
             stream.start()
+
+    def kill(self, signum):
+        """Stop the process using SIGTERM."""
+        if self._process is not None:
+            self._process.kill(signum)
+
+    def close(self):
+        if self._process is not None:
+            self._process.close()
 
     def _dispatch_cb(self):
         # handle the exit callback

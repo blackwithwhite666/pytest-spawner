@@ -71,10 +71,7 @@ class ProcessTracker(object):
                 break
             else:
                 # a process need to be kill. Send a SIGKILL signal
-                try:
-                    process.kill(signal.SIGKILL)
-                except Exception:
-                    pass
+                process.kill(signal.SIGKILL)
 
                 # and close it. (maybe we should just close it)
                 process.close()
