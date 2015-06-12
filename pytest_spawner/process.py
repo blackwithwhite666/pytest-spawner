@@ -20,10 +20,10 @@ class Stream(object):
         self._process = process
         self._channel = pyuv.Pipe(self._loop)
 
-        evtype_prefix = 'proc.%d.io.%s' % (self._process.pid, label)
-        self.read_evtype = '%s.read' % evtype_prefix
-        self.write_evtype = '%s.write' % evtype_prefix
-        self.writelines_evtype = '%s.writelines' % evtype_prefix
+        self._evtype_prefix = 'proc.%d.io.%s' % (self._process.pid, label)
+        self.read_evtype = '%s.read' % self._evtype_prefix
+        self.write_evtype = '%s.write' % self._evtype_prefix
+        self.writelines_evtype = '%s.writelines' % self._evtype_prefix
 
     @property
     def stdio(self):
@@ -43,15 +43,30 @@ class Stream(object):
             pid=self._process.pid, data=data, error=error)
         self._emitter.publish(self.read_evtype, msg)
 
+    def speculative_read(self):
+        fd = self._channel.fileno()
+        while True:
+            buf = os.read(fd, 8192)
+            if not buf:
+                return
+            self._on_read(self._channel, buf, None)
+
     def start(self):
         self._channel.start_read(self._on_read)
         self._emitter.subscribe(self.write_evtype, self._on_write)
         self._emitter.subscribe(self.writelines_evtype, self._on_writelines)
 
     def stop(self):
+        self._emitter.unsubscribe(self.write_evtype, self._on_write)
+        self._emitter.unsubscribe(self.writelines_evtype, self._on_writelines)
+
         if not self._channel.closed:
             self._channel.close()
+
         self._process = None
+
+    def __repr__(self):
+        return '<Stream: evtype={0._evtype_prefix!r} active={0._channel.active!r}>'.format(self)
 
 
 class ProcessConfig(object):
@@ -142,6 +157,10 @@ class Process(object):
     def running(self):
         return self._running
 
+    @property
+    def os_pid(self):
+        return self._process.pid if self._running else None
+
     def spawn(self, once=False, graceful_timeout=None, env=None):
         """Spawn the process."""
 
@@ -165,7 +184,6 @@ class Process(object):
 
         # start redirecting IO
         for stream in self._streams:
-            self._emitter.subscribe(stream.read_evtype, self._on_read_cb)
             stream.start()
 
     def kill(self, signum):
@@ -177,21 +195,6 @@ class Process(object):
         if self._process is not None:
             self._process.close()
 
-    def _dispatch_cb(self):
-        # handle the exit callback
-        if self._on_exit_cb is not None and self._process is None and not self._streams:
-            self._on_exit_cb(self, self._exit_status, self._term_signal)
-
-    def _on_read_cb(self, evtype, msg):
-        error = msg["error"]
-        stream = msg["stream"]
-
-        if error is not None and error & pyuv.errno.UV_EOF:
-            stream.stop()
-            self._streams.remove(stream)
-
-            self._dispatch_cb()
-
     def _exit_cb(self, handle, exit_status, term_signal):
         self._running = False
         self._process = None
@@ -200,4 +203,10 @@ class Process(object):
         self._exit_status = exit_status
         self._term_signal = term_signal
 
-        self._dispatch_cb()
+        for stream in self._streams:
+            stream.speculative_read()
+            stream.stop()
+
+        # handle the exit callback
+        if self._on_exit_cb is not None:
+            self._on_exit_cb(self, self._exit_status, self._term_signal)

@@ -139,9 +139,9 @@ class Manager(object):
         # we keep a list of all running process by id here
         self._running[pid] = process
 
-        self._publish('spawn', name=process.name, pid=pid)
-        self._publish('state.%s.spawn' % process.name, name=process.name, pid=pid)
-        self._publish('proc.%s.spawn' % pid, name=process.name, pid=pid)
+        self._publish('spawn', name=process.name, pid=pid, os_pid=process.os_pid)
+        self._publish('state.%s.spawn' % process.name, name=process.name, pid=pid, os_pid=process.os_pid)
+        self._publish('proc.%s.spawn' % pid, name=process.name, pid=pid, os_pid=process.os_pid)
 
     def _reap_processes(self, state):
         while True:
@@ -162,9 +162,9 @@ class Manager(object):
             self._tracker.check(process, process.graceful_timeout)
 
             # notify others that the process is beeing reaped
-            self._publish('reap', name=process.name, pid=process.pid)
-            self._publish('state.%s.reap' % process.name, name=process.name, pid=process.pid)
-            self._publish('proc.%s.reap' % process.pid, name=process.name, pid=process.pid)
+            self._publish('reap', name=process.name, pid=process.pid, os_pid=process.os_pid)
+            self._publish('state.%s.reap' % process.name, name=process.name, pid=process.pid, os_pid=process.os_pid)
+            self._publish('proc.%s.reap' % process.pid, name=process.name, pid=process.pid, os_pid=process.os_pid)
 
     def _publish(self, evtype, **ev):
         event = {'event': evtype}

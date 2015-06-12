@@ -1,13 +1,12 @@
 # conding: utf-8
 
 import logging
-import collections
 
 
 class EventEmitter(object):
 
     def __init__(self):
-        self._events = collections.defaultdict(set)
+        self._events = {}
         self._wildcards = set()
 
     def publish(self, evtype, *args, **kwargs):
@@ -43,22 +42,23 @@ class EventEmitter(object):
         if evtype.endswith("."):
             evtype = evtype[:-1]
 
+        if evtype not in self._events:
+            self._events[evtype] = set()
         self._events[evtype].add((once, listener))
 
     def unsubscribe(self, evtype, listener, once=False):
         """Unsubscribe from an event."""
-        try:
-            self._events[evtype].remove((once, listener))
-        except KeyError:
-            pass
 
-    def unsubscribe_all(self, events=()):
-        """Unsubscribe all listeners from a list of events."""
-        for evtype in events:
-            if evtype == ".":
-                self._wildcards = set()
-            else:
-                self._events[evtype] = set()
+        if evtype == ".": # wildcard
+            self._wildcards.remove((once, listener))
+            return
+
+        if evtype.endswith("."):
+            evtype = evtype[:-1]
+
+        self._events[evtype].remove((once, listener))
+        if not self._events[evtype]:
+            self._events.pop(evtype)
 
     def _send(self, queue, wqueue):
         for evtype, args, kwargs in wqueue:
@@ -67,7 +67,7 @@ class EventEmitter(object):
 
         for pattern, evtype, args, kwargs in queue:
             # emit the event to all listeners
-            if self._events[pattern]:
+            if pattern in self._events:
                 self._events[pattern] = self._send_listeners(evtype, self._events[pattern].copy(), *args, **kwargs)
 
     def _send_listeners(self, evtype, listeners, *args, **kwargs):
