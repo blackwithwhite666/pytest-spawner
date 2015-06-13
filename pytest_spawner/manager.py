@@ -20,7 +20,7 @@ class Manager(object):
 
         self._thread = threading.Thread(target=self._target)
         self._thread.daemon = True
-        self._events = EventEmitter()
+        self._events = EventEmitter(self._loop)
 
         # initialize the process tracker
         self._tracker = ProcessTracker(self._loop)
@@ -197,6 +197,7 @@ class Manager(object):
         def shutdown():
             self._started = False
             self._tracker.stop()
+            self._events.stop()
 
         # stop all processes
         with self._lock:

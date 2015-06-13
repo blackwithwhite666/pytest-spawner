@@ -2,6 +2,7 @@
 
 import os
 import time
+import fcntl
 
 
 def getcwd():
@@ -23,3 +24,8 @@ def nanotime(s=None):
     if s is not None:
         return int(s) * 1000000000
     return time.time() * 1000000000
+
+
+def set_nonblocking(fd):
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)

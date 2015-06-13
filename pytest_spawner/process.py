@@ -1,12 +1,13 @@
 # coding: utf-8
 
 import os
+import errno
 import shlex
 
 import six
 import pyuv
 
-from .util import getcwd
+from .util import getcwd, set_nonblocking
 
 pyuv.Process.disable_stdio_inheritance()
 
@@ -45,8 +46,14 @@ class Stream(object):
 
     def speculative_read(self):
         fd = self._channel.fileno()
+        set_nonblocking(fd)
         while True:
-            buf = os.read(fd, 8192)
+            try:
+                buf = os.read(fd, 8192)
+            except IOError as exc:
+                if exc.errno != errno.EAGAIN:
+                    raise
+                buf = None
             if not buf:
                 return
             self._on_read(self._channel, buf, None)
@@ -189,7 +196,11 @@ class Process(object):
     def kill(self, signum):
         """Stop the process using SIGTERM."""
         if self._process is not None:
-            self._process.kill(signum)
+            try:
+                self._process.kill(signum)
+            except pyuv.error.ProcessError as exc:
+                if exc.args[0] != pyuv.errno.UV_ESRCH:
+                    raise
 
     def close(self):
         if self._process is not None:
