@@ -40,13 +40,11 @@ class EventEmitter(object):
         """Emit an event `evtype`.
         The event will be emitted asynchronously so we don't block here
         """
-        if "." in evtype:
-            parts = evtype.split(".")
-            self._queue.append((parts[0], evtype, args, kwargs))
+        if len(evtype) > 1:
             key = []
-            for part in parts:
+            for part in evtype:
                 key.append(part)
-                self._queue.append((".".join(key), evtype, args, kwargs))
+                self._queue.append((tuple(key), evtype, args, kwargs))
         else:
             self._queue.append((evtype, evtype, args, kwargs))
 
@@ -59,12 +57,9 @@ class EventEmitter(object):
     def subscribe(self, evtype, listener, once=False):
         """Subcribe to an event."""
 
-        if evtype == ".": # wildcard
+        if not evtype: # wildcard
             self._wildcards.add((once, listener))
             return
-
-        if evtype.endswith("."):
-            evtype = evtype[:-1]
 
         if evtype not in self._events:
             self._events[evtype] = set()
@@ -73,12 +68,9 @@ class EventEmitter(object):
     def unsubscribe(self, evtype, listener, once=False):
         """Unsubscribe from an event."""
 
-        if evtype == ".": # wildcard
+        if not evtype: # wildcard
             self._wildcards.remove((once, listener))
             return
-
-        if evtype.endswith("."):
-            evtype = evtype[:-1]
 
         self._events[evtype].remove((once, listener))
         if not self._events[evtype]:

@@ -21,10 +21,10 @@ class Stream(object):
         self._process = process
         self._channel = pyuv.Pipe(self._loop)
 
-        self._evtype_prefix = 'proc.%d.io.%s' % (self._process.pid, label)
-        self.read_evtype = '%s.read' % self._evtype_prefix
-        self.write_evtype = '%s.write' % self._evtype_prefix
-        self.writelines_evtype = '%s.writelines' % self._evtype_prefix
+        self._evtype_prefix = ('proc', self._process.pid, 'io', label)
+        self.read_evtype = self._evtype_prefix + ('read', )
+        self.write_evtype = self._evtype_prefix + ('write', )
+        self.writelines_evtype = self._evtype_prefix + ('writelines', )
 
     @property
     def stdio(self):

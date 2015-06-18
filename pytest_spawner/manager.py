@@ -56,7 +56,7 @@ class Manager(object):
 
             state = ProcessState(config)
             self._states[config.name] = state
-            self._publish('load', name=config.name)
+            self._publish(('load', ), name=config.name)
 
         if start:
             self._start_process(state)
@@ -72,7 +72,7 @@ class Manager(object):
             state = self._states.pop(name)
 
             # notify that we unload the process
-            self._publish('unload', name=name)
+            self._publish(('unload', ), name=name)
 
         # stop the process now.
         self._stop_process(state)
@@ -84,7 +84,7 @@ class Manager(object):
             state = self._get_state(name)
 
             # notify that we are starting the process
-            self._publish('commit', name=state.name)
+            self._publish(('commit', ), name=state.name)
 
             self._spawn_process(
                 state=state,
@@ -106,14 +106,14 @@ class Manager(object):
     def _start_process(self, state):
         with self._lock:
             # notify that we are starting the process
-            self._publish('start', name=state.name)
+            self._publish(('start', ), name=state.name)
 
             self._spawn_process(state)
 
     def _stop_process(self, state):
         with self._lock:
             # notify that we are stoppping the process
-            self._publish('stop', name=state.name)
+            self._publish(('stop', ), name=state.name)
 
             self._reap_processes(state)
 
@@ -139,9 +139,9 @@ class Manager(object):
         # we keep a list of all running process by id here
         self._running[pid] = process
 
-        self._publish('spawn', name=process.name, pid=pid, os_pid=process.os_pid)
-        self._publish('state.%s.spawn' % process.name, name=process.name, pid=pid, os_pid=process.os_pid)
-        self._publish('proc.%s.spawn' % pid, name=process.name, pid=pid, os_pid=process.os_pid)
+        self._publish(('spawn', ), name=process.name, pid=pid, os_pid=process.os_pid)
+        self._publish(('state', process.name, 'spawn'), name=process.name, pid=pid, os_pid=process.os_pid)
+        self._publish(('proc', pid, 'spawn'), name=process.name, pid=pid, os_pid=process.os_pid)
 
     def _reap_processes(self, state):
         while True:
@@ -162,9 +162,9 @@ class Manager(object):
             self._tracker.check(process, process.graceful_timeout)
 
             # notify others that the process is beeing reaped
-            self._publish('reap', name=process.name, pid=process.pid, os_pid=process.os_pid)
-            self._publish('state.%s.reap' % process.name, name=process.name, pid=process.pid, os_pid=process.os_pid)
-            self._publish('proc.%s.reap' % process.pid, name=process.name, pid=process.pid, os_pid=process.os_pid)
+            self._publish(('reap', ), name=process.name, pid=process.pid, os_pid=process.os_pid)
+            self._publish(('state', process.name, 'reap'), name=process.name, pid=process.pid, os_pid=process.os_pid)
+            self._publish(('proc', process.pid, 'reap'), name=process.name, pid=process.pid, os_pid=process.os_pid)
 
     def _publish(self, evtype, **ev):
         event = {'event': evtype}
@@ -183,7 +183,7 @@ class Manager(object):
         self._tracker.start()
 
         # manage processes
-        self._events.subscribe('exit', self._on_exit)
+        self._events.subscribe(('exit', ), self._on_exit)
 
         self._started = True
         self._loop.run()
@@ -248,5 +248,5 @@ class Manager(object):
                 term_signal=term_signal,
                 once=process.once)
 
-            self._publish('exit', **ev_details)
-            self._publish('state.%s.exit' % process.name, **ev_details)
+            self._publish(('exit', ), **ev_details)
+            self._publish(('state', process.name, 'exit'), **ev_details)
