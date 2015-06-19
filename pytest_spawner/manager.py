@@ -48,6 +48,14 @@ class Manager(object):
         self._waker.send()
         self._thread.join()
 
+    def subscribe(self, evtype, listener, once=False):
+        """Subcribe to an event."""
+        self._events.subscribe(evtype, listener, once)
+
+    def unsubscribe(self, evtype, listener, once=False):
+        """Unsubscribe from an event."""
+        self._events.unsubscribe(evtype, listener, once)
+
     def load(self, config, start=True):
         """Run process with given config of type `.process.ProcessConfig`."""
         with self._lock:
@@ -63,7 +71,6 @@ class Manager(object):
 
     def unload(self, name):
         """Unload a process config."""
-
         with self._lock:
             if name not in self._states:
                 raise ProcessNotFound()
@@ -79,14 +86,13 @@ class Manager(object):
 
     def commit(self, name, graceful_timeout=None, env=None):
         """The process won't be kept alived at the end."""
-
         with self._lock:
             state = self._get_state(name)
 
             # notify that we are starting the process
             self._publish(('commit', ), name=state.name)
 
-            self._spawn_process(
+            return self._spawn_process(
                 state=state,
                 once=True,
                 graceful_timeout=graceful_timeout,
@@ -142,6 +148,8 @@ class Manager(object):
         self._publish(('spawn', ), name=process.name, pid=pid, os_pid=process.os_pid)
         self._publish(('state', process.name, 'spawn'), name=process.name, pid=pid, os_pid=process.os_pid)
         self._publish(('proc', pid, 'spawn'), name=process.name, pid=pid, os_pid=process.os_pid)
+
+        return pid
 
     def _reap_processes(self, state):
         while True:
@@ -250,3 +258,4 @@ class Manager(object):
 
             self._publish(('exit', ), **ev_details)
             self._publish(('state', process.name, 'exit'), **ev_details)
+            self._publish(('proc', process.pid, 'exit'), **ev_details)

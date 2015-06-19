@@ -2,6 +2,7 @@
 
 import logging
 import collections
+import threading
 
 import pyuv
 
@@ -11,6 +12,7 @@ class EventEmitter(object):
     def __init__(self, loop):
         self._events = {}
         self._wildcards = set()
+        self._lock = threading.RLock()
 
         self._queue = collections.deque()
         self._wqueue = collections.deque()
@@ -56,25 +58,27 @@ class EventEmitter(object):
 
     def subscribe(self, evtype, listener, once=False):
         """Subcribe to an event."""
+        with self._lock:
 
-        if not evtype: # wildcard
-            self._wildcards.add((once, listener))
-            return
+            if not evtype: # wildcard
+                self._wildcards.add((once, listener))
+                return
 
-        if evtype not in self._events:
-            self._events[evtype] = set()
-        self._events[evtype].add((once, listener))
+            if evtype not in self._events:
+                self._events[evtype] = set()
+            self._events[evtype].add((once, listener))
 
     def unsubscribe(self, evtype, listener, once=False):
         """Unsubscribe from an event."""
+        with self._lock:
 
-        if not evtype: # wildcard
-            self._wildcards.remove((once, listener))
-            return
+            if not evtype: # wildcard
+                self._wildcards.remove((once, listener))
+                return
 
-        self._events[evtype].remove((once, listener))
-        if not self._events[evtype]:
-            self._events.pop(evtype)
+            self._events[evtype].remove((once, listener))
+            if not self._events[evtype]:
+                self._events.pop(evtype)
 
     def _dispatch_event(self):
         self._spinner.start(lambda h: None)
@@ -86,13 +90,15 @@ class EventEmitter(object):
         for _ in xrange(wqueue_len):
             evtype, args, kwargs = self._wqueue.popleft()
             if self._wildcards:
-                self._wildcards = self._send_listeners(evtype, self._wildcards.copy(), *args, **kwargs)
+                with self._lock:
+                    self._wildcards = self._send_listeners(evtype, self._wildcards.copy(), *args, **kwargs)
 
         for _ in xrange(queue_len):
             pattern, evtype, args, kwargs = self._queue.popleft()
             # emit the event to all listeners
             if pattern in self._events:
-                self._events[pattern] = self._send_listeners(evtype, self._events[pattern].copy(), *args, **kwargs)
+                with self._lock:
+                    self._events[pattern] = self._send_listeners(evtype, self._events[pattern].copy(), *args, **kwargs)
 
         if not self._spinner.closed:
             self._spinner.stop()

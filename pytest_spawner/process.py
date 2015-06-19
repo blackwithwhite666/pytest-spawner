@@ -21,10 +21,10 @@ class Stream(object):
         self._process = process
         self._channel = pyuv.Pipe(self._loop)
 
-        self._evtype_prefix = ('proc', self._process.pid, 'io', label)
-        self.read_evtype = self._evtype_prefix + ('read', )
-        self.write_evtype = self._evtype_prefix + ('write', )
-        self.writelines_evtype = self._evtype_prefix + ('writelines', )
+        self._evtype_prefix = ('proc', self._process.pid)
+        self.read_evtype = self._evtype_prefix + ('read', label)
+        self.write_evtype = self._evtype_prefix + ('write', label)
+        self.writelines_evtype = self._evtype_prefix + ('writelines', label)
 
     @property
     def stdio(self):
@@ -39,9 +39,12 @@ class Stream(object):
         self._channel.writelines(data)
 
     def _on_read(self, handle, data, error):
+        if not data:
+            return
+
         msg = dict(
             event=self.read_evtype, name=self._process.name, stream=self,
-            pid=self._process.pid, data=data, error=error)
+            pid=self._process.pid, data=data)
         self._emitter.publish(self.read_evtype, msg)
 
     def speculative_read(self):
