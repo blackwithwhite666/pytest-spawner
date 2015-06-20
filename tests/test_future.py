@@ -192,7 +192,7 @@ def test_result_with_success():
     # TODO(brian@sweetapp.com): This test is timing dependant.
     def notification():
         # Wait until the main thread is waiting for the result.
-        time.sleep(0.1)
+        time.sleep(1)
         f1.set_result(42)
 
     f1 = create_future(state=future.PENDING)
@@ -206,7 +206,7 @@ def test_result_with_cancel():
     # TODO(brian@sweetapp.com): This test is timing dependant.
     def notification():
         # Wait until the main thread is waiting for the result.
-        time.sleep(0.1)
+        time.sleep(1)
         f1.cancel()
 
     f1 = create_future(state=future.PENDING)
@@ -233,7 +233,7 @@ def test_exception_with_timeout():
 def test_exception_with_success():
     def notification():
         # Wait until the main thread is waiting for the exception.
-        time.sleep(0.1)
+        time.sleep(1)
         with f1._condition:
             f1._state = future.FINISHED
             f1._exception = SpawnerError()
