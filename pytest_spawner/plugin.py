@@ -11,6 +11,8 @@ from .manager import Manager
 from .process import ProcessConfig
 from .error import ProcessError
 
+__all__ = ['pytest_configure', 'pytest_funcarg__spawner']
+
 
 def pytest_configure(config):
     """Always register the spawner plugin with py.test or tests can't
