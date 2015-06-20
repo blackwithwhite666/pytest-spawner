@@ -25,7 +25,7 @@ class Manager(object):
     exit_evtype = ('exit', )
 
     def __init__(self):
-        self._loop = pyuv.Loop.default_loop()
+        self._loop = pyuv.Loop()
 
         self._thread = threading.Thread(target=self._target)
         self._thread.daemon = True

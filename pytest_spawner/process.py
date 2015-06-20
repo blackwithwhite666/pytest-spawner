@@ -20,9 +20,10 @@ class Stream(object):
         self._emitter = emitter
         self._process = process
         self._channel = pyuv.Pipe(self._loop)
+        self._label = label
 
         config = self._process.config
-        evtype_suffix = (label, )
+        evtype_suffix = (self._label, )
         self.read_evtype = config.read_evtype + evtype_suffix
         self.write_evtype = config.write_evtype + evtype_suffix
         self.writelines_evtype = config.write_evtype + evtype_suffix
@@ -77,7 +78,7 @@ class Stream(object):
         self._process = None
 
     def __repr__(self):
-        return '<Stream: evtype={0._evtype_prefix!r} active={0._channel.active!r}>'.format(self)
+        return '<Stream: label={0._label!r} active={0._channel.active!r}>'.format(self)
 
 
 class ProcessConfig(object):
