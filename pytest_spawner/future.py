@@ -6,6 +6,8 @@ import threading
 
 import six
 
+from .error import CancelledError, TimeoutError
+
 # Possible future states (for internal use by the futures package).
 PENDING = 'PENDING'
 RUNNING = 'RUNNING'
@@ -30,16 +32,6 @@ _STATE_TO_DESCRIPTION_MAP = {
     CANCELLED_AND_NOTIFIED: "cancelled",
     FINISHED: "finished"
 }
-
-
-class CancelledError(Exception):
-    """The Future was cancelled."""
-    pass
-
-
-class TimeoutError(Exception):
-    """The operation exceeded the given deadline."""
-    pass
 
 
 class Future(object):

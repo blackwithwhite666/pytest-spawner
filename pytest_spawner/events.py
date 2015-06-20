@@ -22,6 +22,9 @@ class EventEmitter(object):
         self._event_dispatcher.ref = False
         self._spinner = pyuv.Idle(loop)
 
+        self._waker = pyuv.Async(loop, self._send)
+        self._waker.ref = False
+
     def stop(self):
         """Close the event.
         This function clear the list of listeners and stop all idle callback.
@@ -38,23 +41,38 @@ class EventEmitter(object):
         if not self._spinner.closed:
             self._spinner.close()
 
+        if not self._waker.closed:
+            self._waker.close()
+
+    def _enqueue(self, evtype, args, kwargs):
+        with self._lock:
+
+            if len(evtype) > 1:
+                key = []
+                for part in evtype:
+                    key.append(part)
+                    self._queue.append((tuple(key), evtype, args, kwargs))
+            else:
+                self._queue.append((evtype, evtype, args, kwargs))
+
+            # emit the event for wildcards events
+            self._wqueue.append((evtype, args, kwargs))
+
     def publish(self, evtype, *args, **kwargs):
         """Emit an event `evtype`.
         The event will be emitted asynchronously so we don't block here
         """
-        if len(evtype) > 1:
-            key = []
-            for part in evtype:
-                key.append(part)
-                self._queue.append((tuple(key), evtype, args, kwargs))
-        else:
-            self._queue.append((evtype, evtype, args, kwargs))
-
-        # emit the event for wildcards events
-        self._wqueue.append((evtype, args, kwargs))
+        self._enqueue(evtype, args, kwargs)
 
         # send the event for later
-        self._dispatch_event()
+        self._spinner.start(lambda h: None)
+
+    def publish_from_thread(self, evtype, *args, **kwargs):
+        """Thread-safe version of publish."""
+        self._enqueue(evtype, args, kwargs)
+
+        # wake up loop for processing
+        self._waker.send()
 
     def subscribe(self, evtype, listener, once=False):
         """Subcribe to an event."""
@@ -79,9 +97,6 @@ class EventEmitter(object):
             self._events[evtype].remove((once, listener))
             if not self._events[evtype]:
                 self._events.pop(evtype)
-
-    def _dispatch_event(self):
-        self._spinner.start(lambda h: None)
 
     def _send(self, handle):
         wqueue_len = len(self._wqueue)

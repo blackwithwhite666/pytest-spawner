@@ -4,9 +4,12 @@ from __future__ import absolute_import, unicode_literals
 
 import collections
 
+import pyuv
+
 from .future import Future
 from .manager import Manager
 from .process import ProcessConfig
+from .error import ProcessError
 
 
 def pytest_configure(config):
@@ -40,34 +43,39 @@ class ProcessWaiter(object):
         self._config = ProcessConfig(name, cmd, env=env)
         self._buffers = collections.defaultdict(list)
         self._future = Future()
-        self._pid = None
 
     def _on_read(self, evtype, data):
         self._buffers[evtype[-1]].append(data['data'])
 
     def _on_exit(self, evtype, data):
-        self._future.set_result(b''.join(self._buffers['stdout']))
+        if data['exception']:
+            self._future.set_exception(data['exception'])
+        elif data['exit_status']:
+            self._future.set_exception(
+                ProcessError(self._config.cmd, data['exit_status'], data['term_signal']))
+        else:
+            self._future.set_result(b''.join(self._buffers['stdout']))
 
-    def start(self):
+    def _start(self):
         self._manager.load(self._config, start=False)
-        self._pid = self._manager.commit(self._config.name)
-        self._manager.subscribe(('proc', self._pid, 'read'), self._on_read)
-        self._manager.subscribe(('proc', self._pid, 'exit'), self._on_exit)
+        self._manager.subscribe(self._config.read_evtype, self._on_read)
+        self._manager.subscribe(self._config.exit_evtype, self._on_exit)
+        self._manager.commit(self._config.name)
 
-    def stop(self):
-        self._manager.unsubscribe(('proc', self._pid, 'exit'), self._on_exit)
-        self._manager.unsubscribe(('proc', self._pid, 'read'), self._on_read)
+    def _stop(self):
+        self._manager.unsubscribe(self._config.exit_evtype, self._on_exit)
+        self._manager.unsubscribe(self._config.read_evtype, self._on_read)
         self._manager.unload(self._config.name)
 
     def result(self, timeout=None):
         return self._future.result(timeout=timeout)
 
     def __enter__(self):
-        self.start()
+        self._start()
         return self
 
     def __exit__(self, *args):
-        self.stop()
+        self._stop()
 
 
 class SpawnerFuncArg(object):

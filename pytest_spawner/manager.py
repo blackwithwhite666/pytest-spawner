@@ -8,12 +8,21 @@ import pyuv
 
 from .state import ProcessTracker, ProcessState
 from .events import EventEmitter
-from .error import ProcessNotFound, ProcessConflict
+from .error import StateNotFound, StateConflict
 
 DEFAULT_GRACEFUL_TIMEOUT = 10.0
 
 
 class Manager(object):
+
+    load_evtype = ('load', )
+    unload_evtype = ('unload', )
+    commit_evtype = ('commit', )
+    start_evtype = ('start', )
+    stop_evtype = ('stop', )
+    spawn_evtype = ('spawn', )
+    reap_evtype = ('reap', )
+    exit_evtype = ('exit', )
 
     def __init__(self):
         self._loop = pyuv.Loop.default_loop()
@@ -34,6 +43,16 @@ class Manager(object):
         self._lock = threading.RLock()
 
         self._max_process_id = 0
+
+    def _publish(self, evtype, **ev):
+        event = {'event': evtype}
+        event.update(ev)
+        self._events.publish(evtype, event)
+
+    def _publish_from_thread(self, evtype, **ev):
+        event = {'event': evtype}
+        event.update(ev)
+        self._events.publish_from_thread(evtype, event)
 
     def start(self):
         if self._started:
@@ -60,29 +79,33 @@ class Manager(object):
         """Run process with given config of type `.process.ProcessConfig`."""
         with self._lock:
             if config.name in self._states:
-                raise ProcessConflict()
+                raise StateConflict()
 
             state = ProcessState(config)
             self._states[config.name] = state
-            self._publish(('load', ), name=config.name)
+            self._publish_from_thread(
+                self.load_evtype, name=config.name, state=state, start=start)
 
-        if start:
-            self._start_process(state)
+    def _on_load(self, evtype, data):
+        if data['start']:
+            self._start_process(data['state'])
 
     def unload(self, name):
         """Unload a process config."""
         with self._lock:
             if name not in self._states:
-                raise ProcessNotFound()
+                raise StateNotFound()
 
             # get the state and remove it from the context
             state = self._states.pop(name)
 
             # notify that we unload the process
-            self._publish(('unload', ), name=name)
+            self._publish_from_thread(
+                self.unload_evtype, name=name, state=state)
 
+    def _on_unload(self, evtype, data):
         # stop the process now.
-        self._stop_process(state)
+        self._stop_process(data['state'])
 
     def commit(self, name, graceful_timeout=None, env=None):
         """The process won't be kept alived at the end."""
@@ -90,13 +113,14 @@ class Manager(object):
             state = self._get_state(name)
 
             # notify that we are starting the process
-            self._publish(('commit', ), name=state.name)
+            self._publish_from_thread(
+                self.commit_evtype, name=state.name, state=state,
+                graceful_timeout=graceful_timeout, env=env)
 
-            return self._spawn_process(
-                state=state,
-                once=True,
-                graceful_timeout=graceful_timeout,
-                env=env)
+    def _on_commit(self, evtype, data):
+        self._spawn_process(
+            state=data['state'], graceful_timeout=data['graceful_timeout'],
+            env=data['env'], once=True)
 
     def _get_process_id(self):
         """Generate a process id."""
@@ -106,29 +130,22 @@ class Manager(object):
 
     def _get_state(self, name):
         if name not in self._states:
-            raise ProcessNotFound()
+            raise StateNotFound()
         return self._states[name]
 
     def _start_process(self, state):
         with self._lock:
             # notify that we are starting the process
-            self._publish(('start', ), name=state.name)
+            self._publish(self.start_evtype, name=state.name)
 
             self._spawn_process(state)
 
     def _stop_process(self, state):
         with self._lock:
             # notify that we are stoppping the process
-            self._publish(('stop', ), name=state.name)
+            self._publish(self.stop_evtype, name=state.name)
 
             self._reap_processes(state)
-
-    def _manage_processes(self, state):
-        if state.stopped:
-            return
-
-        if not state.active:
-            self._spawn_process(state)
 
     def _spawn_process(self, state, once=False, graceful_timeout=None, env=None):
         """Spawn a new process and add it to the state."""
@@ -145,11 +162,10 @@ class Manager(object):
         # we keep a list of all running process by id here
         self._running[pid] = process
 
-        self._publish(('spawn', ), name=process.name, pid=pid, os_pid=process.os_pid)
-        self._publish(('state', process.name, 'spawn'), name=process.name, pid=pid, os_pid=process.os_pid)
-        self._publish(('proc', pid, 'spawn'), name=process.name, pid=pid, os_pid=process.os_pid)
-
-        return pid
+        # notify subscribers about new process
+        ev_details = dict(name=process.name, pid=pid, os_pid=process.os_pid)
+        self._publish(self.spawn_evtype, **ev_details)
+        self._publish(process.config.spawn_evtype, **ev_details)
 
     def _reap_processes(self, state):
         while True:
@@ -170,14 +186,10 @@ class Manager(object):
             self._tracker.check(process, process.graceful_timeout)
 
             # notify others that the process is beeing reaped
-            self._publish(('reap', ), name=process.name, pid=process.pid, os_pid=process.os_pid)
-            self._publish(('state', process.name, 'reap'), name=process.name, pid=process.pid, os_pid=process.os_pid)
-            self._publish(('proc', process.pid, 'reap'), name=process.name, pid=process.pid, os_pid=process.os_pid)
+            ev_details = dict(name=process.name, pid=process.pid, os_pid=process.os_pid)
+            self._publish(self.reap_evtype, **ev_details)
+            self._publish(process.config.reap_evtype, **ev_details)
 
-    def _publish(self, evtype, **ev):
-        event = {'event': evtype}
-        event.update(ev)
-        self._events.publish(evtype, event)
 
     def _target(self):
 
@@ -191,7 +203,10 @@ class Manager(object):
         self._tracker.start()
 
         # manage processes
-        self._events.subscribe(('exit', ), self._on_exit)
+        self._events.subscribe(self.load_evtype, self._on_load)
+        self._events.subscribe(self.commit_evtype, self._on_commit)
+        self._events.subscribe(self.exit_evtype, self._on_exit)
+        self._events.subscribe(self.unload_evtype, self._on_unload)
 
         self._started = True
         self._loop.run()
@@ -223,16 +238,20 @@ class Manager(object):
         with self._lock:
             try:
                 state = self._get_state(name)
-            except ProcessNotFound:
+            except StateNotFound:
                 # race condition, we already removed this process
                 return
 
             # eventually restart the process
             if not state.stopped and not once:
                 # manage the template, eventually restart a new one.
-                self._manage_processes(state)
+                if state.stopped:
+                    return
 
-    def _on_process_exit(self, process, exit_status, term_signal):
+                if not state.active:
+                    self._spawn_process(state)
+
+    def _on_process_exit(self, process, **kwargs):
         with self._lock:
             # maybe uncheck this process from the tracker
             self._tracker.uncheck(process)
@@ -243,7 +262,7 @@ class Manager(object):
 
             try:
                 state = self._get_state(process.name)
-            except ProcessNotFound:
+            except StateNotFound:
                 pass
             else:
                 state.remove(process)
@@ -252,10 +271,8 @@ class Manager(object):
             ev_details = dict(
                 name=process.name,
                 pid=process.pid,
-                exit_status=exit_status,
-                term_signal=term_signal,
-                once=process.once)
+                once=process.once,
+                **kwargs)
 
-            self._publish(('exit', ), **ev_details)
-            self._publish(('state', process.name, 'exit'), **ev_details)
-            self._publish(('proc', process.pid, 'exit'), **ev_details)
+            self._publish(self.exit_evtype, **ev_details)
+            self._publish(process.config.exit_evtype, **ev_details)

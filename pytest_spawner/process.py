@@ -21,10 +21,11 @@ class Stream(object):
         self._process = process
         self._channel = pyuv.Pipe(self._loop)
 
-        self._evtype_prefix = ('proc', self._process.pid)
-        self.read_evtype = self._evtype_prefix + ('read', label)
-        self.write_evtype = self._evtype_prefix + ('write', label)
-        self.writelines_evtype = self._evtype_prefix + ('writelines', label)
+        config = self._process.config
+        evtype_suffix = (label, )
+        self.read_evtype = config.read_evtype + evtype_suffix
+        self.write_evtype = config.write_evtype + evtype_suffix
+        self.writelines_evtype = config.write_evtype + evtype_suffix
 
     @property
     def stdio(self):
@@ -93,6 +94,15 @@ class ProcessConfig(object):
         self.cmd = cmd
         self.settings = settings
 
+        self.evtype_prefix = ('state', self.name)
+        self.spawn_evtype = self.evtype_prefix + ('spawn', )
+        self.reap_evtype = self.evtype_prefix + ('reap', )
+        self.exit_evtype = self.evtype_prefix + ('exit', )
+
+        self.read_evtype = self.evtype_prefix + ('read', )
+        self.write_evtype = self.evtype_prefix + ('write', )
+        self.writelines_evtype = self.evtype_prefix + ('writelines', )
+
     def make_process(self, loop, emitter, pid, label, env=None, on_exit=None):
         params = {}
         for name, default in self.DEFAULT_PARAMS.items():
@@ -108,18 +118,18 @@ class ProcessConfig(object):
             params['env'].update(env)
 
         params['on_exit_cb'] = on_exit
-        return Process(loop, emitter, pid, label, self.cmd, **params)
+        return Process(loop, emitter, self, pid, label, self.cmd, **params)
 
 
 class Process(object):
     """Class wrapping a process."""
 
-    def __init__(self, loop, emitter, pid, name, cmd,
+    def __init__(self, loop, emitter, config, pid, name, cmd,
                  args=None, env=None, cwd=None, on_exit_cb=None):
         self._loop = loop
         self._emitter = emitter
-        self._env = env or {}
 
+        self.config = config
         self.pid = pid
         self.name = name
 
@@ -137,6 +147,7 @@ class Process(object):
                 self._cmd = splitted_args[0]
             self._args = splitted_args
 
+        self._env = env or {}
         self._cwd = cwd or getcwd()
 
         self._on_exit_cb = on_exit_cb
@@ -149,9 +160,6 @@ class Process(object):
         self._graceful_time = 0
         self.graceful_timeout = None
         self.once = False
-
-        self._exit_status = None
-        self._term_signal = None
 
         self._setup_stdio()
 
@@ -189,12 +197,20 @@ class Process(object):
             stdio=self._stdio)
 
         # spawn the process
-        self._process = pyuv.Process.spawn(self._loop, **kwargs)
-        self._running = True
+        try:
+            process = pyuv.Process.spawn(self._loop, **kwargs)
+        except pyuv.error.ProcessError as exc:
+            # handle the exit callback
+            if self._on_exit_cb is not None:
+                self._on_exit_cb(
+                    self, exception=exc, exit_status=None, term_signal=None)
+        else:
+            self._process = process
+            self._running = True
 
-        # start redirecting IO
-        for stream in self._streams:
-            stream.start()
+            # start redirecting IO
+            for stream in self._streams:
+                stream.start()
 
     def kill(self, signum):
         """Stop the process using SIGTERM."""
@@ -214,13 +230,12 @@ class Process(object):
         self._process = None
         handle.close()
 
-        self._exit_status = exit_status
-        self._term_signal = term_signal
-
         for stream in self._streams:
             stream.speculative_read()
             stream.stop()
 
         # handle the exit callback
         if self._on_exit_cb is not None:
-            self._on_exit_cb(self, self._exit_status, self._term_signal)
+            self._on_exit_cb(
+                self, exception=None, exit_status=exit_status, term_signal=term_signal)
+
