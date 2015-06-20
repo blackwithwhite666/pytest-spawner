@@ -1,5 +1,7 @@
 # coding: utf-8
 
+from __future__ import absolute_import, unicode_literals
+
 import os
 import errno
 import shlex
@@ -135,10 +137,10 @@ class Process(object):
         self.name = name
 
         # set command
-        self._cmd = six.b(cmd)
+        self._cmd = six.u(cmd)
         if args is not None:
             if isinstance(args, six.string_types):
-                self._args = shlex.split(six.b(args))
+                self._args = shlex.split(six.u(args))
             else:
                 self._args = [six.b(arg) for arg in args]
 

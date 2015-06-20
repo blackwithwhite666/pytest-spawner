@@ -1,6 +1,8 @@
 # coding: utf-8
 # ported from concurrent.futures
 
+from __future__ import absolute_import, unicode_literals
+
 import logging
 import threading
 

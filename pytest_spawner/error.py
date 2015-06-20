@@ -1,5 +1,7 @@
 # coding: utf-8
 
+from __future__ import absolute_import, unicode_literals
+
 
 class SpawnerError(Exception):
     pass
@@ -38,4 +40,4 @@ class ProcessError(SpawnerError):
         self.exit_status = exit_status
         self.term_signal = term_signal
         super(ProcessError, self).__init__(
-            "Command %r returned non-zero exit status %d" % (self.cmd, self.exit_status))
+            'Command %r returned non-zero exit status %d' % (self.cmd, self.exit_status))
