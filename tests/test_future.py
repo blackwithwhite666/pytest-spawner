@@ -8,6 +8,7 @@ import threading
 import pytest
 
 from pytest_spawner import future
+from pytest_spawner.error import SpawnerError
 
 
 def create_future(state=future.PENDING, exception=None, result=None):
@@ -22,7 +23,7 @@ PENDING_FUTURE = create_future(state=future.PENDING)
 RUNNING_FUTURE = create_future(state=future.RUNNING)
 CANCELLED_FUTURE = create_future(state=future.CANCELLED)
 CANCELLED_AND_NOTIFIED_FUTURE = create_future(state=future.CANCELLED_AND_NOTIFIED)
-EXCEPTION_FUTURE = create_future(state=future.FINISHED, exception=IOError())
+EXCEPTION_FUTURE = create_future(state=future.FINISHED, exception=SpawnerError())
 SUCCESSFUL_FUTURE = create_future(state=future.FINISHED, result=42)
 
 
@@ -118,7 +119,7 @@ def test_repr():
     assert re.match('<Future at 0x[0-9a-f]+ state=running>', repr(RUNNING_FUTURE))
     assert re.match('<Future at 0x[0-9a-f]+ state=cancelled>', repr(CANCELLED_FUTURE))
     assert re.match('<Future at 0x[0-9a-f]+ state=cancelled>', repr(CANCELLED_AND_NOTIFIED_FUTURE))
-    assert re.match('<Future at 0x[0-9a-f]+ state=finished raised IOError>', repr(EXCEPTION_FUTURE))
+    assert re.match('<Future at 0x[0-9a-f]+ state=finished raised SpawnerError>', repr(EXCEPTION_FUTURE))
     assert re.match('<Future at 0x[0-9a-f]+ state=finished returned int>', repr(SUCCESSFUL_FUTURE))
 
 
@@ -127,7 +128,7 @@ def test_cancel():
     f2 = create_future(state=future.RUNNING)
     f3 = create_future(state=future.CANCELLED)
     f4 = create_future(state=future.CANCELLED_AND_NOTIFIED)
-    f5 = create_future(state=future.FINISHED, exception=IOError())
+    f5 = create_future(state=future.FINISHED, exception=SpawnerError())
     f6 = create_future(state=future.FINISHED, result=5)
 
     assert f1.cancel()
@@ -182,7 +183,7 @@ def test_result_with_timeout():
         CANCELLED_AND_NOTIFIED_FUTURE.result(timeout=0)
     with pytest.raises(future.CancelledError):
         CANCELLED_AND_NOTIFIED_FUTURE.result(timeout=0)
-    with pytest.raises(IOError):
+    with pytest.raises(SpawnerError):
         EXCEPTION_FUTURE.result(timeout=0)
     assert SUCCESSFUL_FUTURE.result(timeout=0) == 42
 
@@ -225,7 +226,7 @@ def test_exception_with_timeout():
         CANCELLED_FUTURE.exception(timeout=0)
     with pytest.raises(future.CancelledError):
         CANCELLED_AND_NOTIFIED_FUTURE.exception(timeout=0)
-    assert isinstance(EXCEPTION_FUTURE.exception(timeout=0), IOError)
+    assert isinstance(EXCEPTION_FUTURE.exception(timeout=0), SpawnerError)
     assert SUCCESSFUL_FUTURE.exception(timeout=0) is None
 
 
@@ -235,12 +236,12 @@ def test_exception_with_success():
         time.sleep(0.1)
         with f1._condition:
             f1._state = future.FINISHED
-            f1._exception = IOError()
+            f1._exception = SpawnerError()
             f1._condition.notify_all()
 
     f1 = create_future(state=future.PENDING)
     t = threading.Thread(target=notification)
     t.start()
 
-    assert isinstance(f1.exception(timeout=5), IOError)
+    assert isinstance(f1.exception(timeout=5), SpawnerError)
 

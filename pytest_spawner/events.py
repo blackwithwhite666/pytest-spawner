@@ -5,6 +5,7 @@ import collections
 import threading
 
 import pyuv
+import six
 
 
 class EventEmitter(object):
@@ -102,13 +103,13 @@ class EventEmitter(object):
         wqueue_len = len(self._wqueue)
         queue_len = len(self._queue)
 
-        for _ in xrange(wqueue_len):
+        for _ in six.moves.range(wqueue_len):
             evtype, args, kwargs = self._wqueue.popleft()
             if self._wildcards:
                 with self._lock:
                     self._wildcards = self._send_listeners(evtype, self._wildcards.copy(), *args, **kwargs)
 
-        for _ in xrange(queue_len):
+        for _ in six.moves.range(queue_len):
             pattern, evtype, args, kwargs = self._queue.popleft()
             # emit the event to all listeners
             if pattern in self._events:
