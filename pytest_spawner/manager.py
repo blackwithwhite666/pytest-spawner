@@ -52,6 +52,7 @@ class Manager(object):
         self._events.publish(evtype, event)
 
     def _publish_from_thread(self, evtype, **ev):
+        # NB: don't call this function from critical section, it will lead to deadlock
         event = {'event': evtype}
         event.update(ev)
         self._events.publish_from_thread(evtype, event)
@@ -85,8 +86,10 @@ class Manager(object):
 
             state = ProcessState(config)
             self._states[config.name] = state
-            self._publish_from_thread(
-                self.load_evtype, name=config.name, state=state, start=start)
+
+        # notify about new config
+        self._publish_from_thread(
+            self.load_evtype, name=config.name, state=state, start=start)
 
     def _on_load(self, evtype, data):
         if data['start']:
@@ -101,9 +104,9 @@ class Manager(object):
             # get the state and remove it from the context
             state = self._states.pop(name)
 
-            # notify that we unload the process
-            self._publish_from_thread(
-                self.unload_evtype, name=name, state=state)
+        # notify that we unload the process
+        self._publish_from_thread(
+            self.unload_evtype, name=name, state=state)
 
     def _on_unload(self, evtype, data):
         # stop the process now.
@@ -114,10 +117,10 @@ class Manager(object):
         with self._lock:
             state = self._get_state(name)
 
-            # notify that we are starting the process
-            self._publish_from_thread(
-                self.commit_evtype, name=state.name, state=state,
-                graceful_timeout=graceful_timeout, env=env)
+        # notify that we are starting the process
+        self._publish_from_thread(
+            self.commit_evtype, name=state.name, state=state,
+            graceful_timeout=graceful_timeout, env=env)
 
     def _on_commit(self, evtype, data):
         self._spawn_process(
@@ -191,7 +194,6 @@ class Manager(object):
             ev_details = dict(name=process.name, pid=process.pid, os_pid=process.os_pid)
             self._publish(self.reap_evtype, **ev_details)
             self._publish(process.config.reap_evtype, **ev_details)
-
 
     def _target(self):
 
