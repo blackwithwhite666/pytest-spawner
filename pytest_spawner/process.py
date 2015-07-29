@@ -57,7 +57,7 @@ class Stream(object):
         while True:
             try:
                 buf = os.read(fd, 8192)
-            except IOError as exc:
+            except (OSError, IOError) as exc:
                 if exc.errno != errno.EAGAIN:
                     raise
                 buf = None
@@ -90,9 +90,13 @@ class ProcessConfig(object):
         "args": None,
         "env": None,
         "cwd": None,
+        "capture_stdin": False,
+        "capture_stdout": False,
+        "capture_stderr": False
     }
 
     def __init__(self, name, cmd, **settings):
+        assert isinstance(cmd, six.string_types), "cmd should be string, use args instead"
         self.name = name
         self.cmd = cmd
         self.settings = settings
@@ -128,7 +132,8 @@ class Process(object):
     """Class wrapping a process."""
 
     def __init__(self, loop, emitter, config, pid, name, cmd,
-                 args=None, env=None, cwd=None, on_exit_cb=None):
+                 args=None, env=None, cwd=None, on_exit_cb=None,
+                 capture_stdin=None, capture_stderr=None, capture_stdout=None):
         self._loop = loop
         self._emitter = emitter
 
@@ -160,6 +165,12 @@ class Process(object):
         self._stopped = False
         self._running = False
 
+        self._captures = (
+            ('stdin', capture_stdin),
+            ('stdout', capture_stdout),
+            ('stderr', capture_stderr)
+        )
+
         self._graceful_time = 0
         self.graceful_timeout = None
         self.once = False
@@ -167,12 +178,17 @@ class Process(object):
         self._setup_stdio()
 
     def _setup_stdio(self):
-        self._streams = [
-            Stream(self._loop, self._emitter, self, 'stdin'),
-            Stream(self._loop, self._emitter, self, 'stdout'),
-            Stream(self._loop, self._emitter, self, 'stderr')
-        ]
-        self._stdio = [stream.stdio for stream in self._streams]
+        self._streams = []
+        self._stdio = []
+        for fd, (name, capture) in enumerate(self._captures):
+            if capture:
+                stream = Stream(self._loop, self._emitter, self, name)
+                self._streams.append(stream)
+                self._stdio.append(stream.stdio)
+            elif name == "stdin":
+                self._stdio.append(pyuv.StdIO(flags=pyuv.UV_IGNORE))
+            else:
+                self._stdio.append(pyuv.StdIO(fd=fd, flags=pyuv.UV_INHERIT_FD))
 
     @property
     def running(self):
