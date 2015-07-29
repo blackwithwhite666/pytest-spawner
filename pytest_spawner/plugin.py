@@ -42,7 +42,7 @@ class SpawnerPlugin(object):
         self._manager.stop()
 
 
-class ProcessWaiter(object):
+class ProcessWatcher(object):
 
     def __init__(self, manager, name, cmd, **kwargs):
         self._manager = manager
@@ -94,14 +94,14 @@ class ProcessWaiter(object):
             self._manager.unsubscribe(self._config.exit_evtype, self._on_exit)
             self._manager.unsubscribe(self._config.read_evtype, self._on_read)
 
-    def _start(self):
+    def start(self):
         self._started = True
         self._manager.load(self._config, start=False)
         self._manager.subscribe(self._config.read_evtype, self._on_read)
         self._manager.subscribe(self._config.exit_evtype, self._on_exit)
         self._manager.commit(self._config.name)
 
-    def _stop(self):
+    def stop(self):
         self._started = False
         self._manager.unload(self._config.name)
 
@@ -109,11 +109,11 @@ class ProcessWaiter(object):
         return self._future.result(timeout=timeout or DEFAULT_TIMEOUT)
 
     def __enter__(self):
-        self._start()
+        self.start()
         return self
 
     def __exit__(self, *args):
-        self._stop()
+        self.stop()
 
 
 class SpawnerApi(object):
@@ -121,17 +121,26 @@ class SpawnerApi(object):
     def __init__(self, manager):
         self._manager = manager
 
-    def check_output(self, name, cmd, env=None, args=None, timeout=None):
-        with ProcessWaiter(self._manager, name, cmd, env=env, args=args, capture_stdout=True, redirect_stderr=True) as waiter:
-            return waiter.result(timeout)['stdout']
+    def create(self, name, cmd, args=None, env=None, **kwargs):
+        return ProcessWatcher(self._manager, name, cmd, env=env, args=args, **kwargs)
+
+    def check(self, name, cmd, args=None, env=None, timeout=None, **kwargs):
+        with self.create(name, cmd, args, env, **kwargs) as watcher:
+            return watcher.result(timeout)
+
+    def check_call(self, name, cmd, args=None, env=None, timeout=None):
+        return self.check(name, cmd, args, env, timeout, redirect_stdout=True, redirect_stderr=True)['exit_status']
+
+    def check_output(self, name, cmd, args=None, env=None, timeout=None):
+        return self.check(name, cmd, args, env, timeout, capture_stdout=True, redirect_stderr=True)['stdout']
 
     @contextlib.contextmanager
-    def spawn(self, name, cmd, env=None, args=None, timeout=None):
-        waiter = ProcessWaiter(self._manager, name, cmd, env=env, args=args, redirect_stdout=True, redirect_stderr=True)
-        with waiter:
+    def spawn(self, name, cmd, args=None, env=None, timeout=None):
+        watcher = self.create(name, cmd, args, env, redirect_stdout=True, redirect_stderr=True)
+        with watcher:
             yield
         # check for result code
-        waiter.result(timeout)
+        watcher.result(timeout)
 
 
 @pytest.fixture(scope="session")
