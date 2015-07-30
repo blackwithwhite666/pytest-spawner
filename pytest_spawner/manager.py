@@ -108,6 +108,17 @@ class Manager(object):
         self._publish_from_thread(
             self.unload_evtype, name=name, state=state)
 
+    def exists(self, name):
+        with self._lock:
+            return name in self._states
+
+    def get_os_pids(self, name):
+        with self._lock:
+            if name not in self._states:
+                raise StateNotFound()
+
+            return self._states[name].os_pids
+
     def _on_unload(self, evtype, data):
         # stop the process now.
         self._stop_process(data['state'])

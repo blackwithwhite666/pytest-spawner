@@ -65,6 +65,8 @@ class EventEmitter(object):
         """Emit an event `evtype`.
         The event will be emitted asynchronously so we don't block here
         """
+        assert not self._spinner.closed, "spinner already closed"
+
         self._enqueue(evtype, args, kwargs)
 
         # send the event for later
@@ -72,6 +74,8 @@ class EventEmitter(object):
 
     def publish_from_thread(self, evtype, *args, **kwargs):
         """Thread-safe version of publish."""
+        assert not self._waker.closed, "waker already closed"
+
         self._enqueue(evtype, args, kwargs)
 
         # wake up loop for processing

@@ -2,6 +2,7 @@
 
 from __future__ import absolute_import, unicode_literals
 
+import os
 import contextlib
 import collections
 import logging
@@ -63,6 +64,8 @@ class ProcessWatcher(object):
             assert not kwargs.get('capture_stderr'), 'can\'t use redirect_stderr with capture_stderr'
             kwargs['capture_stderr'] = True
 
+        self._ignore_exit_status = kwargs.pop('ignore_exit_status', False)
+
         self._config = ProcessConfig(name, cmd, **kwargs)
 
     def _log_lines(self, logger, data, level=logging.INFO):
@@ -80,7 +83,7 @@ class ProcessWatcher(object):
     def _on_exit(self, evtype, data):
         if data['exception']:
             self._future.set_exception(data['exception'])
-        elif data['exit_status']:
+        elif data['exit_status'] and not self._ignore_exit_status:
             self._future.set_exception(
                 ProcessError(self._config.cmd, data['exit_status'], data['term_signal']))
         else:
@@ -121,22 +124,26 @@ class SpawnerApi(object):
     def __init__(self, manager):
         self._manager = manager
 
-    def create(self, name, cmd, args=None, env=None, **kwargs):
-        return ProcessWatcher(self._manager, name, cmd, env=env, args=args, **kwargs)
+    def create(self, name, cmd, args=None, **kwargs):
+        return ProcessWatcher(self._manager, name, cmd, args=args, **kwargs)
 
-    def check(self, name, cmd, args=None, env=None, timeout=None, **kwargs):
-        with self.create(name, cmd, args, env, **kwargs) as watcher:
+    def check(self, cmd, args=None, **kwargs):
+        timeout = kwargs.pop("timeout", None)
+        name = os.path.basename(cmd)
+        assert not self._manager.exists(name), "process with name %s already exists" % name
+        with self.create(name, cmd, args=args, **kwargs) as watcher:
             return watcher.result(timeout)
 
-    def check_call(self, name, cmd, args=None, env=None, timeout=None):
-        return self.check(name, cmd, args, env, timeout, redirect_stdout=True, redirect_stderr=True)['exit_status']
+    def check_call(self, cmd, args=None, **kwargs):
+        return self.check(cmd, args=args, redirect_stdout=True, redirect_stderr=True, **kwargs)['exit_status']
 
-    def check_output(self, name, cmd, args=None, env=None, timeout=None):
-        return self.check(name, cmd, args, env, timeout, capture_stdout=True, redirect_stderr=True)['stdout']
+    def check_output(self, cmd, args=None, **kwargs):
+        return self.check(cmd, args=args, capture_stdout=True, redirect_stderr=True, **kwargs)['stdout']
 
     @contextlib.contextmanager
-    def spawn(self, name, cmd, args=None, env=None, timeout=None):
-        watcher = self.create(name, cmd, args, env, redirect_stdout=True, redirect_stderr=True)
+    def spawn(self, name, cmd, args=None, **kwargs):
+        timeout = kwargs.pop("timeout", None)
+        watcher = self.create(name, cmd, args=args, redirect_stdout=True, redirect_stderr=True, **kwargs)
         with watcher:
             yield
         # check for result code

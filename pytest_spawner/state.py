@@ -111,3 +111,8 @@ class ProcessState(object):
             self._running.remove(process)
         except ValueError:
             pass
+
+    @property
+    def os_pids(self):
+        """Return pid of running processes."""
+        return [process.os_pid for process in self._running]

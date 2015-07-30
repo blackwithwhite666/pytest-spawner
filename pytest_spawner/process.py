@@ -5,6 +5,7 @@ from __future__ import absolute_import, unicode_literals
 import os
 import errno
 import shlex
+import logging
 
 import six
 import pyuv
@@ -164,6 +165,7 @@ class Process(object):
         self._streams = []
         self._stopped = False
         self._running = False
+        self._logger = logging.getLogger("spawner.%s.%s" % (self.config.name, self.pid))
 
         self._captures = (
             ('stdin', capture_stdin),
@@ -232,13 +234,13 @@ class Process(object):
                 stream.start()
 
     def kill(self, signum):
-        """Stop the process using SIGTERM."""
+        """Stop the process using signal."""
         if self._process is not None:
             try:
                 self._process.kill(signum)
             except pyuv.error.ProcessError as exc:
                 if exc.args[0] != pyuv.errno.UV_ESRCH:
-                    raise
+                    self._logger.error("Unable to kill process %s.%s because %s" % (self.name, self.pid, exc.args[1]))
 
     def close(self):
         if self._process is not None:
