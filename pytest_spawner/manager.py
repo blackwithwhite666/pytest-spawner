@@ -70,6 +70,10 @@ class Manager(object):
         self._waker.send()
         self._thread.join()
 
+    @property
+    def started(self):
+        return self._started
+
     def subscribe(self, evtype, listener, once=False):
         """Subcribe to an event."""
         self._events.subscribe(evtype, listener, once)

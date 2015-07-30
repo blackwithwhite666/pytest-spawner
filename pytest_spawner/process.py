@@ -244,6 +244,10 @@ class Process(object):
 
     def close(self):
         if self._process is not None:
+            if self._running:
+                for stream in self._streams:
+                    stream.speculative_read()
+                    stream.stop()
             self._process.close()
 
     def _exit_cb(self, handle, exit_status, term_signal):

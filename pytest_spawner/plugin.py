@@ -39,8 +39,9 @@ class SpawnerPlugin(object):
     def pytest_sessionstart(self, session):
         self._manager.start()
 
-    def pytest_sessionfinish(self, session, exitstatus):
-        self._manager.stop()
+    def pytest_unconfigure(self, config):
+        if self._manager.started:
+            self._manager.stop()
 
 
 class ProcessWatcher(object):
