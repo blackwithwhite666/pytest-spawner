@@ -109,6 +109,11 @@ class ProcessWatcher(object):
         self._started = False
         self._manager.unload(self._config.name)
 
+    def restart(self):
+        self.stop()
+        self.start()
+        self._future = Future()
+
     def result(self, timeout=None):
         return self._future.result(timeout=timeout or DEFAULT_TIMEOUT)
 
@@ -146,7 +151,7 @@ class SpawnerApi(object):
         timeout = kwargs.pop("timeout", None)
         watcher = self.create(name, cmd, args=args, redirect_stdout=True, redirect_stderr=True, **kwargs)
         with watcher:
-            yield
+            yield watcher
         # check for result code
         watcher.result(timeout)
 
