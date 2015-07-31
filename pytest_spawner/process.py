@@ -173,7 +173,7 @@ class Process(object):
             ('stderr', capture_stderr)
         )
 
-        self._graceful_time = 0
+        self.graceful_time = 0
         self.graceful_timeout = None
         self.once = False
 
@@ -245,16 +245,10 @@ class Process(object):
     def close(self):
         if self._process is not None:
             if self._running:
-                for stream in self._streams:
-                    stream.speculative_read()
-                    stream.stop()
+                self._close()
             self._process.close()
 
-    def _exit_cb(self, handle, exit_status, term_signal):
-        self._running = False
-        self._process = None
-        handle.close()
-
+    def _close(self, exit_status=None, term_signal=None):
         for stream in self._streams:
             stream.speculative_read()
             stream.stop()
@@ -263,4 +257,16 @@ class Process(object):
         if self._on_exit_cb is not None:
             self._on_exit_cb(
                 self, exception=None, exit_status=exit_status, term_signal=term_signal)
+
+    def _exit_cb(self, handle, exit_status, term_signal):
+        self._running = False
+        self._process = None
+        handle.close()
+        self._close(exit_status=exit_status, term_signal=term_signal)
+
+    def __lt__(self, other):
+        return (self.pid != other.pid and
+                self.graceful_time < other.graceful_time)
+
+    __cmp__ = __lt__
 

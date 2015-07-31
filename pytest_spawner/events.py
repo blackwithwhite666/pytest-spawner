@@ -28,10 +28,13 @@ class EventEmitter(object):
         self._waker = pyuv.Async(loop, self._send)
         self._waker.ref = False
 
+        self._stopped = False
+
     def stop(self):
         """Close the event.
         This function clear the list of listeners and stop all idle callback.
         """
+        self._stopped = True
         self._wqueue.clear()
         self._queue.clear()
         self._events = {}
@@ -83,6 +86,8 @@ class EventEmitter(object):
 
     def subscribe(self, evtype, listener, once=False):
         """Subcribe to an event."""
+        assert not self._stopped, "emitter is already stopped"
+
         with self._lock:
 
             if not evtype: # wildcard
@@ -95,6 +100,8 @@ class EventEmitter(object):
 
     def unsubscribe(self, evtype, listener, once=False):
         """Unsubscribe from an event."""
+        assert not self._stopped, "emitter is already stopped"
+
         with self._lock:
 
             if not evtype: # wildcard
@@ -113,27 +120,26 @@ class EventEmitter(object):
             evtype, args, kwargs = self._wqueue.popleft()
             if self._wildcards:
                 with self._lock:
-                    self._wildcards = self._send_listeners(evtype, self._wildcards.copy(), *args, **kwargs)
+                    self._send_listeners(evtype, self._wildcards, *args, **kwargs)
 
         for _ in six.moves.range(queue_len):
             pattern, evtype, args, kwargs = self._queue.popleft()
             # emit the event to all listeners
             if pattern in self._events:
                 with self._lock:
-                    self._events[pattern] = self._send_listeners(evtype, self._events[pattern].copy(), *args, **kwargs)
+                    self._send_listeners(evtype, self._events[pattern], *args, **kwargs)
 
         if not self._spinner.closed:
             self._spinner.stop()
 
     def _send_listeners(self, evtype, listeners, *args, **kwargs):
         to_remove = []
-        for once, listener in listeners:
+        for once, listener in list(listeners):
             try:
                 listener(evtype, *args, **kwargs)
             except Exception:
                 # we ignore all exception
-                logging.error('Uncaught exception', exc_info=True)
-                to_remove.append(listener)
+                logging.error('Uncaught exception in %r', listener, exc_info=True)
 
             if once:
                 # once event
@@ -145,5 +151,3 @@ class EventEmitter(object):
                     listeners.remove((True, listener))
                 except KeyError:
                     pass
-        return listeners
-

@@ -13,11 +13,12 @@ import pyuv
 from .future import Future
 from .manager import Manager
 from .process import ProcessConfig
+from .string_buffer import StringBuffer
 from .error import ProcessError
 
 __all__ = ['pytest_configure', 'spawner']
 
-DEFAULT_TIMEOUT = 5.0
+DEFAULT_TIMEOUT = 15.0
 
 
 def pytest_configure(config):
@@ -48,9 +49,8 @@ class ProcessWatcher(object):
 
     def __init__(self, manager, name, cmd, **kwargs):
         self._manager = manager
-        self._buffers = collections.defaultdict(list)
+        self._buffers = collections.defaultdict(StringBuffer)
         self._future = Future()
-        self._started = False
         self._logger = logging.getLogger('spawner.%s' % name)
 
         self._redirect_stdout = False
@@ -68,20 +68,37 @@ class ProcessWatcher(object):
         self._ignore_exit_status = kwargs.pop('ignore_exit_status', False)
 
         self._config = ProcessConfig(name, cmd, **kwargs)
+        self._closed = False
 
-    def _log_lines(self, logger, data, level=logging.INFO):
-        for line in data.splitlines():
-            logger.log(level, line)
+    def _log_line(self, line, level=logging.INFO):
+        line = line.strip()
+        if line:
+            self._logger.log(level, line)
+
+    def _buffer_to_log(self, buf, level=logging.INFO):
+        while True:
+            line = buf.read_until('\n')
+            if line is None:
+                return
+            self._log_line(line, level)
 
     def _on_read(self, evtype, data):
+        buf = self._buffers[evtype[-1]]
+        buf.feed(data['data'])
         if self._redirect_stdout and evtype[-1] == 'stdout':
-            self._log_lines(self._logger, data['data'])
+            self._buffer_to_log(buf)
         elif self._redirect_stderr and evtype[-1] == 'stderr':
-            self._log_lines(self._logger, data['data'], logging.ERROR)
-        else:
-            self._buffers[evtype[-1]].append(data['data'])
+            self._buffer_to_log(buf, logging.ERROR)
 
     def _on_exit(self, evtype, data):
+        stdout_data = self._buffers['stdout'].read_all()
+        stderr_data = self._buffers['stderr'].read_all()
+
+        if self._redirect_stdout:
+            self._log_line(stdout_data)
+        if self._redirect_stderr:
+            self._log_line(stderr_data, logging.ERROR)
+
         if data['exception']:
             self._future.set_exception(data['exception'])
         elif data['exit_status'] and not self._ignore_exit_status:
@@ -89,39 +106,41 @@ class ProcessWatcher(object):
                 ProcessError(self._config.cmd, data['exit_status'], data['term_signal']))
         else:
             self._future.set_result({
-                'stdout': b''.join(self._buffers.get('stdout', [])),
-                'stderr': b''.join(self._buffers.get('stderr', [])),
+                'stdout': stdout_data if not self._redirect_stdout else None,
+                'stderr': stderr_data if not self._redirect_stderr else None,
                 'exit_status': data['exit_status']
             })
 
-        if not self._started:
+        if self._closed:
             self._manager.unsubscribe(self._config.exit_evtype, self._on_exit)
             self._manager.unsubscribe(self._config.read_evtype, self._on_read)
 
     def start(self):
-        self._started = True
         self._manager.load(self._config, start=False)
-        self._manager.subscribe(self._config.read_evtype, self._on_read)
-        self._manager.subscribe(self._config.exit_evtype, self._on_exit)
         self._manager.commit(self._config.name)
 
     def stop(self):
-        self._started = False
         self._manager.unload(self._config.name)
 
     def restart(self):
         self.stop()
         self.start()
+        # reset future
+        self._future.cancel()
         self._future = Future()
 
     def result(self, timeout=None):
         return self._future.result(timeout=timeout or DEFAULT_TIMEOUT)
 
     def __enter__(self):
+        assert not self._closed, "watcher already closed"
+        self._manager.subscribe(self._config.read_evtype, self._on_read)
+        self._manager.subscribe(self._config.exit_evtype, self._on_exit)
         self.start()
         return self
 
     def __exit__(self, *args):
+        self._closed = True
         self.stop()
 
 

@@ -20,3 +20,6 @@ def test_check_call(spawner):
 def test_spawn(spawner):
     with spawner.spawn("bash", "bash -i"):
         pass
+
+    with spawner.spawn("bash", "bash -i") as watcher:
+        watcher.restart()

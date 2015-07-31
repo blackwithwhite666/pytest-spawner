@@ -35,7 +35,7 @@ class ProcessTracker(object):
         if not self._check_timer.closed:
             self._check_timer.close()
 
-    def check(self, process, graceful_timeout=10000000000):
+    def check(self, process, graceful_timeout=10 * 10**9):
         process.graceful_time = graceful_timeout + nanotime()
         heapq.heappush(self._processes, process)
 
@@ -63,8 +63,7 @@ class ProcessTracker(object):
             # check the diff between the time it is now and the
             # graceful time set when the worker was stopped
             process = heapq.heappop(self._processes)
-            now = nanotime()
-            delta = process.graceful_time - now
+            delta = process.graceful_time - nanotime()
             if delta > 0:
                 # we have anything to do, put the process back in
                 # the heap and return
